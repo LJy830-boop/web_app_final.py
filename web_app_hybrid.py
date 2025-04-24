@@ -4,6 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import base64
 from io import BytesIO
+import matplotlib.pyplot as plt
 
 # 设置页面配置
 st.set_page_config(page_title="电池SOH和RUL预测系统", layout="wide")
