@@ -9,7 +9,7 @@ from io import BytesIO
 st.set_page_config(page_title="电池SOH和RUL预测系统", layout="wide")
 
 # 使用markdown避免字符显示问题
-st.markdown("# 电池健康状态(SOH)和剩余使用寿命(RUL)预测系统 - 混合版本")
+st.markdown("# 电池健康状态(SOH)和剩余使用寿命(RUL)预测系统 ")
 
 # 侧边栏说明
 st.sidebar.markdown("### 使用说明")
@@ -494,7 +494,7 @@ def main():
     
     # 添加页脚
     st.markdown("---")
-    st.markdown("© 2025 电池SOH和RUL预测系统 | 基于机器学习的电池健康状态和剩余使用寿命预测")
+    st.markdown("© 2025 谢欣宇专家研发& 基于机器学习的电池健康状态和剩余使用寿命预测")
 
 if __name__ == "__main__":
     main()
