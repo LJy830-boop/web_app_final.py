@@ -4,7 +4,11 @@ import numpy as np
 import matplotlib.pyplot as plt
 import base64
 from io import BytesIO
-import matplotlib.pyplot as plt
+
+# 设置支持中文的字体
+plt.rcParams['font.sans-serif'] = ['SimHei']
+# 避免负号显示异常
+plt.rcParams['axes.unicode_minus'] = False
 
 # 设置页面配置
 st.set_page_config(page_title="电池SOH和RUL预测系统", layout="wide")
@@ -19,7 +23,7 @@ st.sidebar.info(
     1. 上传电池测试数据Excel文件
     2. 系统将自动分析数据并预测SOH和RUL
     3. 查看预测结果和可视化
-    
+
     **注意**: 上传的Excel文件应包含电池循环测试数据。
     系统会自动识别并处理不同格式的数据。
     """
@@ -29,24 +33,24 @@ st.sidebar.info(
 def create_prediction_plot(soh_pred, rul_pred):
     """创建SOH和RUL预测结果的可视化"""
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
-    
+
     # SOH仪表盘
     soh_colors = ['#FF0000', '#FFA500', '#FFFF00', '#008000']
     soh_thresholds = [0, 60, 80, 90, 100]
-    
+
     # 确定SOH所在的区间
     soh_color = soh_colors[0]
     for i in range(len(soh_thresholds)-1):
         if soh_thresholds[i] <= soh_pred <= soh_thresholds[i+1]:
             soh_color = soh_colors[i]
             break
-    
+
     ax1.pie([soh_pred, 100-soh_pred], colors=[soh_color, '#EEEEEE'], 
             startangle=90, counterclock=False, 
             wedgeprops={'width': 0.3, 'edgecolor': 'w'})
     ax1.text(0, 0, f"{soh_pred:.1f}%", ha='center', va='center', fontsize=24, fontweight='bold')
     ax1.set_title('电池健康状态 (SOH)', fontsize=16)
-    
+
     # RUL条形图
     ax2.barh(['剩余使用寿命'], [rul_pred], color='#4CAF50', height=0.5)
     ax2.set_xlim(0, max(100, rul_pred*1.2))
@@ -54,8 +58,9 @@ def create_prediction_plot(soh_pred, rul_pred):
     ax2.set_title('剩余使用寿命 (RUL)', fontsize=16)
     ax2.set_xlabel('循环次数', fontsize=12)
     ax2.grid(axis='x', linestyle='--', alpha=0.7)
-    
+
     plt.tight_layout()
+    
     
     # 将图转换为base64编码
     buf = BytesIO()
