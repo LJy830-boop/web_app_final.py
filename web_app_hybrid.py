@@ -4,6 +4,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 import base64
 from io import BytesIO
+import requests
+import os
+import time
 
 # 设置支持中文的字体
 plt.rcParams['font.sans-serif'] = ['SimHei']
@@ -28,6 +31,21 @@ st.sidebar.info(
     系统会自动识别并处理不同格式的数据。
     """
 )
+
+# 添加服务器连接选项
+st.sidebar.markdown("---")
+st.sidebar.markdown("### 服务器连接选项")
+
+# 连接模式选择
+connection_mode = st.sidebar.radio("运行模式", ["本地模式", "远程服务器模式"])
+
+# 远程服务器配置
+if connection_mode == "远程服务器模式":
+    server_url = st.sidebar.text_input("服务器地址", "http://127.0.0.1:8501")
+    api_key = st.sidebar.text_input("API密钥 (可选)", type="password")
+    st.sidebar.info("远程模式会将数据发送到指定服务器进行分析")
+else:
+    st.sidebar.info("本地模式将在您的计算机上执行所有计算")
 
 # 创建预测结果可视化
 def create_prediction_plot(soh_pred, rul_pred):
@@ -60,7 +78,6 @@ def create_prediction_plot(soh_pred, rul_pred):
     ax2.grid(axis='x', linestyle='--', alpha=0.7)
 
     plt.tight_layout()
-    
     
     # 将图转换为base64编码
     buf = BytesIO()
@@ -182,11 +199,68 @@ def predict_battery(df_cycle, use_nonlinear_model=True, expected_total_cycles=50
         st.error(f"预测过程中出错: {e}")
         return 90.0, 50.0  # 默认值
 
+# 远程预测函数
+def predict_remote(server_url, file, api_key=None, use_nonlinear_model=True, expected_total_cycles=500):
+    """将数据发送到远程服务器进行预测"""
+    try:
+        # 创建进度条
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        # 准备请求数据
+        files = {'file': file}
+        data = {
+            'use_nonlinear_model': str(use_nonlinear_model),
+            'expected_total_cycles': str(expected_total_cycles)
+        }
+        
+        if api_key:
+            data['api_key'] = api_key
+            
+        # 显示连接状态
+        status_text.text("正在连接服务器...")
+        progress_bar.progress(20)
+        time.sleep(0.5)
+        
+        # 发送请求
+        response = requests.post(
+            f"{server_url}/predict",
+            files=files,
+            data=data,
+            timeout=30  # 30秒超时
+        )
+        
+        # 检查响应状态
+        if response.status_code != 200:
+            raise Exception(f"服务器返回错误: {response.status_code} - {response.text}")
+        
+        # 解析响应
+        result = response.json()
+        progress_bar.progress(80)
+        time.sleep(0.5)
+        
+        # 验证响应格式
+        if 'soh' not in result or 'rul' not in result:
+            raise Exception("服务器返回无效响应格式")
+        
+        # 完成进度
+        progress_bar.progress(100)
+        status_text.text("分析完成！")
+        time.sleep(0.5)
+        progress_bar.empty()
+        status_text.empty()
+        
+        return result['soh'], result['rul']
+    
+    except requests.exceptions.RequestException as e:
+        st.error(f"连接服务器失败: {str(e)}")
+        return None, None
+    except Exception as e:
+        st.error(f"远程预测失败: {str(e)}")
+        return None, None
+
 # 主应用
 def main():
-    # 文件上传
-    uploaded_file = st.file_uploader("上传电池测试数据 (Excel格式)", type=["xlsx", "xls"])
-    
     # 添加高级选项
     with st.expander("高级选项"):
         use_nonlinear_model = st.checkbox("启用非线性衰减模型", value=True, 
@@ -195,59 +269,79 @@ def main():
                                          help="设置电池预期的总循环寿命，用于限制RUL预测的上限")
         st.info("注意：无论使用何种模型，当SOH低于80%时，RUL将始终为0，表示电池已达到寿命终点。")
     
+    # 文件上传
+    uploaded_file = st.file_uploader("上传电池测试数据 (Excel格式)", type=["xlsx", "xls"])
+    
     if uploaded_file is not None:
         try:
-            # 读取Excel文件
-            try:
-                # 尝试读取所有工作表
-                excel_file = pd.ExcelFile(uploaded_file)
-                sheet_names = excel_file.sheet_names
+            # 根据选择的模式执行预测
+            if connection_mode == "远程服务器模式":
+                st.info(f"远程模式: 正在将数据发送到服务器 {server_url}...")
                 
-                # 检查是否有'cycle'工作表
-                if 'cycle' in sheet_names:
-                    df_cycle = pd.read_excel(excel_file, sheet_name='cycle')
-                    st.success("成功读取'cycle'工作表！")
-                else:
-                    # 如果没有'cycle'工作表，使用第一个工作表
-                    df_cycle = pd.read_excel(excel_file, sheet_name=0)
-                    st.info(f"未找到'cycle'工作表，使用'{sheet_names[0]}'工作表进行分析。")
-            except Exception as e:
-                st.warning(f"读取Excel文件时出错: {e}")
-                # 尝试直接读取第一个工作表
-                df_cycle = pd.read_excel(uploaded_file)
-            
-            # 显示数据概览
-            st.markdown("## 数据概览")
-            st.dataframe(df_cycle.head())
-            st.text(f"总行数: {len(df_cycle)}")
-            
-            # 数据分析
-            st.markdown("## 数据分析")
-            
-            # 检查数据列
-            numeric_cols = df_cycle.select_dtypes(include=[np.number]).columns.tolist()
-            st.write("检测到的数值列:")
-            st.write(", ".join(numeric_cols))
-            
-            # 如果有足够的数据，显示一些基本统计信息
-            if len(df_cycle) > 1 and len(numeric_cols) > 0:
-                # 选择第一个数值列进行可视化
-                selected_col = st.selectbox("选择要分析的列:", numeric_cols)
+                # 执行远程预测
+                soh_pred, rul_pred = predict_remote(
+                    server_url, 
+                    uploaded_file,
+                    api_key,
+                    use_nonlinear_model,
+                    expected_total_cycles
+                )
                 
-                # 创建简单的趋势图
-                fig, ax = plt.subplots(figsize=(10, 6))
-                ax.plot(df_cycle.index, df_cycle[selected_col], marker='o', linestyle='-')
-                ax.set_title(f"{selected_col}随循环次数的变化")
-                ax.set_xlabel("循环索引")
-                ax.set_ylabel(selected_col)
-                ax.grid(True)
-                st.pyplot(fig)
-            
-            # 预测SOH和RUL
-            st.markdown("## 预测结果")
-            soh_pred, rul_pred = predict_battery(df_cycle, use_nonlinear_model, expected_total_cycles)
+                if soh_pred is None or rul_pred is None:
+                    st.warning("远程预测失败，请检查服务器连接或切换回本地模式")
+                    return
+            else:
+                # 本地模式：读取Excel文件
+                try:
+                    # 尝试读取所有工作表
+                    excel_file = pd.ExcelFile(uploaded_file)
+                    sheet_names = excel_file.sheet_names
+                    
+                    # 检查是否有'cycle'工作表
+                    if 'cycle' in sheet_names:
+                        df_cycle = pd.read_excel(excel_file, sheet_name='cycle')
+                        st.success("成功读取'cycle'工作表！")
+                    else:
+                        # 如果没有'cycle'工作表，使用第一个工作表
+                        df_cycle = pd.read_excel(excel_file, sheet_name=0)
+                        st.info(f"未找到'cycle'工作表，使用'{sheet_names[0]}'工作表进行分析。")
+                except Exception as e:
+                    st.warning(f"读取Excel文件时出错: {e}")
+                    # 尝试直接读取第一个工作表
+                    df_cycle = pd.read_excel(uploaded_file)
+                
+                # 显示数据概览
+                st.markdown("## 数据概览")
+                st.dataframe(df_cycle.head())
+                st.text(f"总行数: {len(df_cycle)}")
+                
+                # 数据分析
+                st.markdown("## 数据分析")
+                
+                # 检查数据列
+                numeric_cols = df_cycle.select_dtypes(include=[np.number]).columns.tolist()
+                st.write("检测到的数值列:")
+                st.write(", ".join(numeric_cols))
+                
+                # 如果有足够的数据，显示一些基本统计信息
+                if len(df_cycle) > 1 and len(numeric_cols) > 0:
+                    # 选择第一个数值列进行可视化
+                    selected_col = st.selectbox("选择要分析的列:", numeric_cols)
+                    
+                    # 创建简单的趋势图
+                    fig, ax = plt.subplots(figsize=(10, 6))
+                    ax.plot(df_cycle.index, df_cycle[selected_col], marker='o', linestyle='-')
+                    ax.set_title(f"{selected_col}随循环次数的变化")
+                    ax.set_xlabel("循环索引")
+                    ax.set_ylabel(selected_col)
+                    ax.grid(True)
+                    st.pyplot(fig)
+                
+                # 预测SOH和RUL
+                soh_pred, rul_pred = predict_battery(df_cycle, use_nonlinear_model, expected_total_cycles)
             
             # 显示预测结果
+            st.markdown("## 预测结果")
             col1, col2 = st.columns(2)
             
             with col1:
@@ -310,8 +404,8 @@ def main():
             else:
                 st.error("电池已达到寿命终点，建议尽快更换电池，以避免可能的性能问题或安全隐患。")
             
-            # 添加详细分析 - 增强功能
-            if len(df_cycle) > 5 and '放电容量(Ah)' in df_cycle.columns:
+            # 如果是本地模式且数据足够，显示详细分析
+            if connection_mode == "本地模式" and 'df_cycle' in locals() and len(df_cycle) > 5 and '放电容量(Ah)' in df_cycle.columns:
                 st.markdown("## 详细分析")
                 
                 # 容量衰减趋势分析
@@ -501,6 +595,8 @@ def main():
     # 添加页脚
     st.markdown("---")
     st.markdown("© 2025 唐光盛-浙江锋锂团队& 基于机器学习的电池健康状态和剩余使用寿命预测")
+    if connection_mode == "远程服务器模式":
+        st.caption(f"当前服务器: {server_url}")
 
 if __name__ == "__main__":
     main()
